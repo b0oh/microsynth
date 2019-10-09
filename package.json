@@ -1,0 +1,24 @@
+{
+  "author": "Dmitry Bushmelev",
+  "description": "Simple synthesizer",
+  "devDependencies": {
+    "@babel/core": "^7.6.2",
+    "@babel/plugin-transform-runtime": "^7.6.2",
+    "@babel/preset-env": "^7.6.2",
+    "@babel/runtime": "^7.6.2",
+    "elm": "^0.19.0-no-deps",
+    "http-server": "^0.11.1",
+    "node-elm-compiler": "^5.0.4",
+    "parcel-bundler": "^1.12.4"
+  },
+  "license": "ISC",
+  "main": "src/index.html",
+  "name": "synth",
+  "repository": "git@github.com:b0oh/synth.git",
+  "scripts": {
+    "build": "parcel build src/index.js --out-dir build --experimental-scope-hoisting",
+    "build-dev": "PARCEL_ELM_DISABLE_DEBUG=false parcel build src/index.js --out-dir build --experimental-scope-hoisting --no-minify",
+    "serve": "http-server build"
+  },
+  "version": "1.0.0"
+}
