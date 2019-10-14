@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 import Browser
+import Browser.Events
 import Dac exposing (Sample)
 import Json.Decode as Json
 import Html exposing (Html)
@@ -12,6 +13,7 @@ import Time
 type alias State =
     { bufferSize : Int
     , bufferSizeInput : String
+    , freq : Float
     , play : Bool
     }
 
@@ -20,12 +22,14 @@ type Message
     = OnBufferSizeChange String
     | ReadBufferSize
     | RequestSamples Int
+    | SetFreq Float
     | ToggleSound
 
 
 defaultState =
     { bufferSize = 25
     , bufferSizeInput = "25"
+    , freq = 440
     , play = False
     }
 
@@ -36,21 +40,23 @@ init flags =
     )
 
 
-freq =
-    440
+type Note
+    = C
+    | D
+    | E
 
 
-sampleFreq =
+sampleFreq freq =
     toFloat Dac.sampleRate / freq
 
 
-sample : Int -> Sample
-sample sampleNumber =
-    sin (toFloat sampleNumber / (sampleFreq / (pi * 2)))
+sample : Float -> Int -> Sample
+sample freq sampleNumber =
+    sin (toFloat sampleNumber / (sampleFreq freq / (pi * 2)))
 
 
-makeSamples : Int -> Int -> List Sample
-makeSamples amount sampleNumber =
+makeSamples : Float -> Int -> Int -> List Sample
+makeSamples freq amount sampleNumber =
     let
         start =
             sampleNumber
@@ -60,7 +66,7 @@ makeSamples amount sampleNumber =
 
         samples =
             List.range start end
-                |> List.map sample
+                |> List.map (sample freq)
     in
     samples
 
@@ -91,10 +97,15 @@ update message state =
                     round (toFloat (Dac.sampleRate * state.bufferSize) / 1000)
 
                 samples =
-                    makeSamples samplesAmount sampleNumber
+                    makeSamples state.freq samplesAmount sampleNumber
             in
             ( state
             , Dac.queueSamples samples
+            )
+
+        SetFreq freq ->
+            ( { state | freq = freq }
+            , Cmd.none
             )
 
         ToggleSound ->
@@ -109,10 +120,59 @@ update message state =
                 )
 
 
+charToNote char =
+    if char == "a" then
+        Just C
+
+    else if char =="s" then
+        Just D
+
+    else if char == "d" then
+        Just E
+
+    else
+        Nothing
+
+
+noteToFreq note =
+    if note == C then
+        523.251
+
+    else if note == D then
+        587.330
+
+    else if note == E then
+        659.255
+
+    else
+        0
+
+
+charToFreq char =
+    charToNote char
+        |> Maybe.map noteToFreq
+
+
+keyboard =
+    Browser.Events.onKeyDown
+        (Json.field "key" Json.string
+            |> Json.andThen
+                 (\key ->
+                      case charToFreq key of
+                          Just freq ->
+                              Json.succeed <| SetFreq freq
+
+                          _ ->
+                              Json.fail ""
+                 )
+        )
+
+
 subscriptions : State -> Sub Message
 subscriptions state =
     Sub.batch
         [ Dac.requestSamples RequestSamples
+        , keyboard
         ]
 
 
