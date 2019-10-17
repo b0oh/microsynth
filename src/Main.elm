@@ -7,14 +7,17 @@ import Json.Decode as Json
 import Html exposing (Html)
 import Html.Attributes as Attrs
 import Html.Events as Events
+import Html.Events.Extra.Mouse as Mouse
+import Html.Events.Extra.Touch as Touch
+import Midi
 import Time
 
 
-type alias State =
+type alias Model =
     { bufferSize : Int
     , bufferSizeInput : String
-    , freq : Float
-    , play : Bool
+    , note : Maybe Midi.Note
+    , running : Bool
     }
 
 
@@ -22,28 +25,33 @@ type Message
     = OnBufferSizeChange String
     | ReadBufferSize
     | RequestSamples Int
-    | SetFreq Float
-    | ToggleSound
+    | NoteOn Midi.Note
+    | NoteRelease Midi.Note
+    | SetBufferSize String
+    | Start
+    | Stop
 
 
-defaultState =
+defaultModel =
     { bufferSize = 25
     , bufferSizeInput = "25"
-    , freq = 440
-    , play = False
+    , note = Nothing
+    , running = True
     }
 
 
 init flags =
-    ( defaultState
-    , Cmd.none
+    let
+        command =
+            if defaultModel.running then
+                Dac.start
+
+            else
+                Dac.stop
+    in
+    ( defaultModel
+    , command
     )
-
-
-type Note
-    = C
-    | D
-    | E
 
 
 sampleFreq freq =
@@ -71,108 +79,119 @@ makeSamples freq amount sampleNumber =
     samples
 
 
-update : Message -> State -> ( State, Cmd Message )
-update message state =
+update : Message -> Model -> ( Model, Cmd Message )
+update message model =
     case message of
         OnBufferSizeChange input ->
-            ( { state | bufferSizeInput = input }
+            ( { model | bufferSizeInput = input }
             , Cmd.none
             )
 
         ReadBufferSize ->
-            case String.toInt state.bufferSizeInput of
+            case String.toInt model.bufferSizeInput of
                 Just size ->
-                    ( { state | bufferSize = size }
+                    ( { model | bufferSize = size }
                     , Cmd.none
                     )
 
                 Nothing ->
-                    ( state
+                    ( model
                     , Cmd.none
                     )
 
         RequestSamples sampleNumber ->
             let
                 samplesAmount =
-                    round (toFloat (Dac.sampleRate * state.bufferSize) / 1000)
+                    round (toFloat (Dac.sampleRate * model.bufferSize) / 1000)
+
+                freq =
+                    model.note
+                        |> Maybe.map (Midi.midiToFreq)
+                        |> Maybe.withDefault 0
 
                 samples =
-                    makeSamples state.freq samplesAmount sampleNumber
+                    makeSamples freq samplesAmount sampleNumber
             in
-            ( state
+            ( model
             , Dac.queueSamples samples
             )
 
-        SetFreq freq ->
-            ( { state | freq = freq }
+        NoteOn note ->
+            ( { model | note = Just note }
             , Cmd.none
             )
 
-        ToggleSound ->
-            if state.play then
-                ( { state | play = False }
-                , Dac.stop
-                )
+        NoteRelease note ->
+            let
+                newModel =
+                    if model.note == Just note then
+                        { model | note = Nothing }
 
-            else
-                ( { state | play = True }
-                , Dac.start
-                )
+                    else
+                        model
+            in
+            ( newModel
+            , Cmd.none
+            )
 
+        SetBufferSize string ->
+            let
+                newModel =
+                    case String.toInt string of
+                        Just size ->
+                            { model
+                                | bufferSize = size
+                                , bufferSizeInput = String.fromInt size
+                            }
 
-charToNote char =
-    if char == "a" then
-        Just C
+                        _ ->
+                            model
+            in
+            ( newModel
+            , Cmd.none
+            )
 
-    else if char =="s" then
-        Just D
+        Start ->
 
-    else if char == "d" then
-        Just E
+            ( { model | running = True }
+            , Dac.start
+            )
 
-    else
-        Nothing
-
-
-noteToFreq note =
-    if note == C then
-        523.251
-
-    else if note == D then
-        587.330
-
-    else if note == E then
-        659.255
-
-    else
-        0
-
-
-charToFreq char =
-    charToNote char
-        |> Maybe.map noteToFreq
+        Stop ->
+            ( { model | running = False }
+            , Dac.stop
+            )
 
 
-keyboard =
-    Browser.Events.onKeyDown
-        (Json.field "key" Json.string
-            |> Json.andThen
-                 (\key ->
-                      case charToFreq key of
-                          Just freq ->
-                              Json.succeed <| SetFreq freq
+midiEvent toMessage =
+    Json.field "key" Json.string
+        |> Json.andThen
+           (\key ->
+                case Midi.keyToMidi key of
+                    Just note ->
+                        Json.succeed <| toMessage note
 
-                          _ ->
-                              Json.fail ""
-                 )
-        )
+                    _ ->
+                        Json.fail ""
+           )
 
 
-subscriptions : State -> Sub Message
-subscriptions state =
+onPress =
+    midiEvent NoteOn
+        |> Browser.Events.onKeyPress
+
+
+onRelease =
+    midiEvent NoteRelease
+        |> Browser.Events.onKeyUp
+
+
+subscriptions : Model -> Sub Message
+subscriptions model =
     Sub.batch
         [ Dac.requestSamples RequestSamples
-        , keyboard
+        , onPress
+        , onRelease
         ]
 
 
@@ -190,18 +209,27 @@ onEnter msg =
         )
 
 
-view : State -> Html Message
-view state =
+view : Model -> Html Message
+view model =
     let
         toggle =
-            Html.button
-                [ Events.onClick ToggleSound ]
-                [ Html.text (if state.play then "stop" else "play") ]
+            if model.running then
+                Html.button
+                    [ Events.onClick Stop ]
+                    [ Html.text "stop" ]
+
+            else
+                Html.button
+                    [ Events.onClick Start ]
+                    [ Html.text "start" ]
+
+        bufferLabel =
+            Html.text "Buffer (ms): "
 
         bufferInput =
             Html.input
                 [ onEnter ReadBufferSize
-                , Attrs.value state.bufferSizeInput
+                , Attrs.value model.bufferSizeInput
                 , Events.onInput OnBufferSizeChange
                 ]
                 []
@@ -210,19 +238,96 @@ view state =
             Html.button
                 [ Events.onClick ReadBufferSize ]
                 [ Html.text "set" ]
+
+        bufferRange =
+            Html.input
+                [ Attrs.type_ "range"
+                , Attrs.min "0"
+                , Attrs.max "250"
+                , Attrs.value <| String.fromInt model.bufferSize
+                , Events.onInput SetBufferSize
+                ]
+                []
+
+        hromatic midiNote =
+            let
+                note =
+                    modBy 12 midiNote
+            in
+            List.member note [ 1, 3, 6, 8, 10 ]
+
+        key note =
+            let
+                varying =
+                    if model.note == Just note then
+                        [ Attrs.style "background" "blue"
+                        , Attrs.style "color" "white"
+                        ]
+
+                    else
+                        if hromatic note then
+                            [ Attrs.style "background" "black"
+                            , Attrs.style "color" "white"
+                            ]
+
+                        else
+                            [ Attrs.style "background" "white"
+                            , Attrs.style "color" "black"
+                            ]
+
+                styles =
+                    varying ++
+                    [ Attrs.style "border-right" "2px solid lightgray"
+                    , Attrs.style "display" "inline-block"
+                    , Attrs.style "height" "200px"
+                    , Attrs.style "line-height" "200px"
+                    , Attrs.style "text-align" "center"
+                    , Attrs.style "width" "50px"
+                    , Mouse.onDown (always (NoteOn note))
+                    , Mouse.onUp (always (NoteRelease note))
+                    , Touch.onStart (always (NoteOn note))
+                    , Touch.onEnd (always (NoteRelease note))
+                    ]
+
+                keyboardKey =
+                    Midi.midiToKey note
+                        |> Maybe.withDefault ""
+            in
+            Html.div
+                styles
+                [ Html.text keyboardKey
+                ]
+
+        keys =
+            List.range 60 76
+                |> List.map key
+                |> Html.div
+                   [ Attrs.style "border" "2px solid lightgray"
+                   , Attrs.style "border-width" "2px 0px 2px 2px"
+                   , Attrs.style "display" "inline-block"
+                   ]
+
+        keyboard =
+            keys
     in
     Html.div
         []
         [ toggle
         , Html.div
             []
-            [ bufferInput
-            , bufferSubmit
+            [ Html.div
+                  []
+                  [ bufferLabel
+                  , bufferInput
+                  , bufferSubmit
+                  ]
+            , bufferRange
             ]
+        , keyboard
         ]
 
 
-main : Program () State Message
+main : Program () Model Message
 main =
     Browser.element
         { init = init

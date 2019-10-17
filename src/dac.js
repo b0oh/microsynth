@@ -10,14 +10,13 @@ export default function (app) {
   let running = false
 
   function start() {
-    running = true
-
     if (audioContext.state === 'suspended') {
         audioContext.resume()
     }
 
     startTime = audioContext.currentTime
     sampleNumber = 0
+    running = true
 
     requestSamples(sampleNumber)
   }
@@ -43,22 +42,18 @@ export default function (app) {
       channel[ix] = samples[ix]
     }
 
-    const source =
-      audioContext.createBufferSource()
+    const source = audioContext.createBufferSource()
 
-    source.buffer =
-      buffer
-
+    source.buffer = buffer
     source.connect(audioContext.destination)
 
     const when = startTime + (sampleNumber / sampleRate)
     const delay = (when - audioContext.currentTime) * 1000
 
     source.start(when)
-    window.setTimeout(function () { requestSamples(sampleNumber) }, delay)
+    window.setTimeout(() => requestSamples(sampleNumber), delay)
 
-    sampleNumber =
-      sampleNumber + samples.length
+    sampleNumber = sampleNumber + samples.length
   }
 
   app.ports.dacQueueSamples.subscribe(queueSamples)

@@ -1,5 +1,9 @@
 # Simple synthesizer
 
+## Prerequisites
+
+* [npm](https://www.npmjs.com/)
+
 ## Install
 
 ```shell
